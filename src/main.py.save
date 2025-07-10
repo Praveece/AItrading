@@ -1,0 +1,59 @@
+                       np.where(fut_close < fut_lower, -1, 0))
+    hist.dropna(inplace=True)
+
+    target_dt = pd.to_datetime(target_dt_str)
+    if target_dt not in hist.index:
+        print(f"Timestamp {target_dt} not in data")
+        return
+
+    features = hist.loc[target_dt, FEATURES].values.reshape(1, -1)
+    probs = model.predict_proba(features)[0]
+    cls = model.classes_
+    idx = np.argmax(probs)
+    pred, conf = cls[idx], probs[idx]
+    true = hist.loc[target_dt, 'Breakout']
+
+    print(f"At {target_dt}, true breakout: {true}, predicted: {pred} with confidence {conf:.2f}")
+    if pred == true and pred != 0:
+        print("✅ Prediction matches real breakout 3 minutes ahead.")
+    else:
+        print("❌ Prediction did not match; consider reviewing the labeling/window.")
+
+# Main loop
+while True:
+    try:
+        if not is_market_open():
+            time.sleep(60)
+            continue
+
+        df = get_latest_data()
+        if df is None or df.empty:
+            time.sleep(60)
+            continue
+
+        x = df[FEATURES].iloc[-1].values.reshape(1, -1)
+        probs = model.predict_proba(x)[0]
+        cls = model.classes_
+        idx = np.argmax(probs)
+        pred, conf = cls[idx], probs[idx]
+
+        if pred != 0 and conf >= PROB_THRESH:
+            price = df['Close'].iloc[-1]
+            atr = df['ATR14'].iloc[-1]
+            # compute target: 1.5 ATR move
+            if pred == 1:
+                target = price + 1.5 * atr
+                direction = 'UP'
+            else:
+                target = price - 1.5 * atr
+                direction = 'DOWN'
+            msg = (f"⚡️ {direction} breakout in ~3min | Price: {price:.2f} | "
+                   f"Target: {target:.2f} | Confidence: {conf:.2f}")
+            bot.send_message(chat_id=CHAT_ID, text=msg)
+            logging.info(f"Alert sent: {msg}")
+
+        time.sleep(60)
+
+    except Exception as e:
+        logging.error(f"Loop error: {e}")
+        time.sleep(60)
